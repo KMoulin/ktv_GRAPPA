@@ -1,4 +1,4 @@
-load('test_data_CPP.mat')
+load('test_data_CPP.mat') %Dataset can be found here https://github.com/KMoulin/ktv_GRAPPA/releases/tag/v0.0
 
 
 %%% Recon Matlab only (VERY SLOW)
@@ -12,4 +12,5 @@ tic;
 k_recon_GPU = Recon_n_Train_5D_2026_2(k_R_composite_gpu,k_input_gpu(:,:,:,:,2,2),ACS_composite_gpu,ACS_gpu(:,:,:,:,2,2),mask_YZ(:,:,:,2,2),int32(NetKTV),cptRy,cptRz); % convert NetKTV to Int, very important
 k_recon_CUDA=gather(k_recon_GPU);
  
+
 disp(['time to recon one 3D volume on CUDA ' num2str(toc)]);
