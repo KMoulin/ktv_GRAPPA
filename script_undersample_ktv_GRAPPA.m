@@ -40,6 +40,7 @@ end
 img_xby2=fftshift(fftshift(fft3c(squeeze(kspace_CC)),2),3);
 Channel_Sens_full=permute(GRAPPA_5D_ktv.ESPIRIT_KM(squeeze(permute(img_xby2(:,:,:,:,1,1),[ 1 2 4 3]))),[1 2 4 3]);
 
+%% GRAPPA Reconstruction
 % For Each Velocities
 % We assume 4 encoding points
 for cpt_dir=1:1:4
@@ -70,10 +71,10 @@ for cpt_dir=1:1:4
             k_recon=squeeze(kspace_CC(:,:,:,:,vectDir(2),vectCar(2)));
         else
 
-            disp(['sVenc Ry ' num2str(cptRy) ' Rz ' num2str(cptRz) ' venc nb ' num2str(cpt_dir) ' recon type ' num2str(cpt_recon) ' Cine ' num2str(cpt_cardiac) ' CC ' num2str(cpt_cc)])
+            disp(['sVenc Ry ' num2str(cptRy) ' Rz ' num2str(cptRz) ' venc nb ' num2str(cpt_dir) ' Cine ' num2str(cpt_cardiac) ' CC ' num2str(nc_CC)])
 
             %%% Undersample the data, create the mask and the Network of points
-            [k_R,mask_R,ACS,mask_YZ,NetG,NetYZ,NetKTV]=GRAPPA_5D_ktv.Undersample_comp_mVENC(squeeze(kspace2),cptRy,cptRz,[10 8],1);
+            [k_R,ACS,mask_YZ,NetKTV]=GRAPPA_5D_ktv.Undersample_comp_mVENC(squeeze(kspace2),cptRy,cptRz,[10 8],1);
            
             %%% Create Composite k-space and ACS datasets
 
@@ -108,7 +109,7 @@ for cpt_dir=1:1:4
        
         end
          
-        %% 3DFFT + Coil combination
+        %%% 3DFFT + Coil combination
         % k_recon contains the GRAPPA k-space reconstructed kspace 
         img_recon=fftshift(fftshift(fft3c(k_recon(1:size(Channel_Sens_full,1),1:size(Channel_Sens_full,2),1:size(Channel_Sens_full,3),:,1,1)),2),3);
         im_recon_coil_V4=sum(squeeze(img_recon).*conj(repmat(Channel_Sens_full,1,1,1,1,size(img_recon,5),size(img_recon,6))),4);
