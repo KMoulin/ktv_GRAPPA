@@ -1,4 +1,4 @@
-# Implementation of the 5D ktv GRAPPA reconstruction
+# Implementation of ktv GRAPPA reconstruction
 
 Main repository for the ktv GRAPPA implementation for 4D flow. Implementation as a universal GRAPPA fashion working with any Patch shape (retro compatible with GRAPPA and k-t GRAPPA). Reconstruct any kspace under the format of a 6D complex matrix [X Y Z Coils Velocities/Venc Time] with a linear interleaving pattern. ktv GRAPPA was mainly developed for 4D flow reconstruction but can theoretically work with any 6D kspace data (multi-contrast/multi-time points). 
 
