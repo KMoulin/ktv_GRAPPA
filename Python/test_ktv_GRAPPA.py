@@ -38,13 +38,14 @@ def save_mat73_complex(path, varname, A):
     with open(path, "r+b") as fh:
         fh.write(hdr.ljust(512, b"\x00"))
 
-
-complex_matrix = load_mat73_complex("C:/Users/kevin/Downloads/Patient6/kspace.mat", "kspace")   # "A" = your MATLAB variable name
+# Load from mat file
+complex_matrix = load_mat73_complex("C:/Users/kevin/Downloads/test_kspace.mat", "kspace")   
 print(complex_matrix.shape, complex_matrix.dtype)                       # e.g. (a, b, c, d, e, f) complex128
 
 t0 = time.perf_counter()
-k_rec = undersample_n_recon_ktv_grappa(complex_matrix, (3,3), mode=2, undersample=0, nc_cc=8, verbose=True,use_gpu=True,coil_sens=True,lam=1e-3)
+# Example on a fully sampled k-space undersampled with Ry=3 and Rz=3, for a prospective undersample case use undersample=0
+k_recon = undersample_n_recon_ktv_grappa(complex_matrix, (3,3), mode=2, undersample=1, nc_cc=8, verbose=True,use_gpu=True,coil_sens=True,lam=1e-3)
 print(f"R={(3,3)} mode={2} ({time.perf_counter() - t0:.1f} s)")
 
-
-save_mat73_complex("C:/Users/kevin/Downloads/Patient6/kspace_python.mat", "k_rec", k_rec)
+# Save result to mat file
+save_mat73_complex("C:/Users/kevin/Downloads/kspace_python.mat", "k_recon", k_recon)
