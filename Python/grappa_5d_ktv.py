@@ -231,57 +231,6 @@ class GRAPPA5DKtv:
             print()
         return to_numpy(k_recon)
 
-    @classmethod
-    def recon_n_time_5d(cls, k_composite, k_R, acs_composite, acs, mask_R, net_ktv,
-                        Ry, Rz, lam_rel=1e-3, max_gb=4.0):
-        """Port of ``Recon_n_Time_5D``: same as recon_n_train_5d, with timings.
-
-        Returns (k_recon, time_save); time_save[cK] = [patch Sn, patch Xn,
-        weights, patch Sr, apply]. Row 0 unused.
-        """
-        xp = array_module(k_composite)
-        k_recon = xp.array(_first_page(k_R, 4), dtype=xp.complex64, copy=True)
-        n_k = Ry * Rz
-        time_save = np.zeros((n_k, 5))
-        for cK in range(1, n_k):
-            net = net_ktv[:, :, cK]
-            lst = cls.get_list_of_example(acs, net)
-            t0 = time.perf_counter()
-            Sn = cls.patch(acs_composite, lst, net)
-            _sync(xp)
-            time_save[cK, 0] = time.perf_counter() - t0
-            t0 = time.perf_counter()
-            Xn = cls.patch_acs(acs, lst)
-            _sync(xp)
-            time_save[cK, 1] = time.perf_counter() - t0
-            t0 = time.perf_counter()
-            W = cls._solve_weights(Sn, Xn, lam_rel)
-            _sync(xp)
-            time_save[cK, 2] = time.perf_counter() - t0
-            del Sn, Xn
-            time_save[cK, 3:5] = cls._apply_kernel(k_recon, k_composite, mask_R, cK, net, W, max_gb)
-        return to_numpy(k_recon), time_save
-
-    @classmethod
-    def recon_n_weight_5d(cls, k_composite, k_R, acs_composite, acs, mask_R, net_ktv,
-                          Ry, Rz, lam_rel=1e-3):
-        """Port of ``Recon_n_Weight_5D``: only trains and returns the weights.
-
-        Returns (k_R unchanged, w_save [Nc, K, Ry*Rz]); page 0 unused. w_save can
-        be fed back to recon_n_train_5d as ``acs_composite`` with ``acs=None``.
-        """
-        xp = array_module(acs_composite)
-        k_recon = to_numpy(_first_page(k_R, 4)).astype(np.complex64)
-        Nc = acs.shape[3]
-        n_k = Ry * Rz
-        w_save = np.zeros((Nc, net_ktv.shape[0], n_k), dtype=np.complex64)
-        for cK in range(1, n_k):
-            W = cls._train_weights(acs_composite, acs, net_ktv[:, :, cK], lam_rel, False, cK)
-            w_save[:, :, cK] = to_numpy(W)
-        if xp is not np:
-            free_gpu_memory()
-        return k_recon, w_save
-
     # ------------------------------------------------------------ recon helpers
     @staticmethod
     def _solve_weights(Sn, Xn, lam_rel):
@@ -433,13 +382,15 @@ class GRAPPA5DKtv:
         list_car, n, guard = [ct], 1, 0
         if ct != 1:
             c = ct + 2
+        else:
+            c = ct
         # (if ct == 1, MATLAB continues from the value left by the venc loop)
         while n < Mt:
             c -= 1
             if c < 1:
                 c = Nt - c
-            if ct == 1 and c == Nt - 2:   # don't go too far backward for phase 1
-                c = ct + 2
+           # if ct == 1 and c == Nt - 2:   # don't go too far backward for phase 1
+           #     c = ct + 2
             if c > Nt:
                 c = 1
             if list_mask[0, c - 1, 1] not in [list_mask[0, i - 1, 1] for i in list_car]:
@@ -543,50 +494,6 @@ class GRAPPA5DKtv:
                 cK += 1
         return mask_YZ, list_kvc
 
-    @staticmethod
-    def find_shift(kspace, Ry, Rz):
-        """Port of ``find_shift``: best-matching (0-based) lattice shift per frame."""
-        Nx, Ny, Nz, Nc, Nv, Nt = kspace.shape[:6]
-        km = (sos(_first_page(kspace, 6)[matlab_mid(Nx)], axis=2) != 0).astype(float)
-        shift = np.zeros((Nv, Nt, 2), dtype=np.int64)
-        for v in range(Nv):
-            for t in range(Nt):
-                best = 1e10
-                for sy in range(Ry):
-                    for sz in range(Rz):
-                        m = np.zeros((Ny, Nz))
-                        m[sy::Ry, sz::Rz] = 1
-                        d = np.abs(m - km[:, :, v, t]).sum()
-                        if best > d:
-                            best = d
-                            shift[v, t] = (sy, sz)
-        return shift
-
-    @classmethod
-    def acs_philips(cls, kspace, Ry, Rz):
-        """Port of ``ACS_Philips``. Returns (acs_size, shift [0-based], kspace_ACS)."""
-        k6 = _first_page(kspace, 6)
-        Nx = k6.shape[0]
-        sampled_all = (sos(k6[matlab_mid(Nx)], axis=2) != 0).all(axis=(2, 3))  # [Ny,Nz]
-        iy, iz = np.nonzero(sampled_all)
-        acs_size = [round(iy.max() - iy.min()) / 2, round(iz.max() - iz.min()) / 2]
-        shift = cls.find_shift(k6, Ry, Rz)
-        acs_mask = (sos(k6, axis=3) != 0).all(axis=(3, 4))                       # [Nx,Ny,Nz]
-        kspace_acs = k6 * acs_mask[:, :, :, None, None, None]
-        return acs_size, shift, kspace_acs
-
-    @staticmethod
-    def add_acs_siemens(kspace, k_acs, Ry, Rz):
-        """Port of ``Add_ACS_Siemens``: paste separately acquired ACS lines into
-        the centre of k-space. Returns (kspace copy, acs_size)."""
-        a1 = (k_acs.shape[1] - Ry + 1) / 2
-        a2 = (k_acs.shape[2] - Rz + 1) / 2
-        Ny, Nz = kspace.shape[1:3]
-        out = np.array(kspace, copy=True)
-        out[:, mslice(Ny / 2 - a1 + 1, Ny / 2 + a1), mslice(Nz / 2 - a2 + 1, Nz / 2 + a2)] = \
-            k_acs[:, :int(2 * a1), :int(2 * a2)]
-        return out, [a1, a2]
-
     # ------------------------------------------------------------ undersampling
     @staticmethod
     def undersample_kspace(kspace, Ry, Rz, acs_size, interleaving):
@@ -617,55 +524,6 @@ class GRAPPA5DKtv:
         zs = mslice(Nz / 2 - acs_size[1] + 1, Nz / 2 + acs_size[1] + 1)
         k_R[:, ys, zs] = kspace[:, ys, zs]
         return k_R, np.array(kspace[:, ys, zs], copy=True)
-
-    @classmethod
-    def undersample_comp_siemens_mvenc(cls, k_compose, k_acs, Ry, Rz, caipi):
-        """Port of ``Undersample_comp_Siemens_mVENC``."""
-        k_compose, acs_size = cls.add_acs_siemens(k_compose, k_acs, Ry, Rz)
-        return cls.undersample_comp_mvenc(k_compose, Ry, Rz, acs_size, caipi)
-
-    @classmethod
-    def undersample_comp_mvenc(cls, k_compose, Ry, Rz, acs_size, caipi, shift_calc=None):
-        """Port of ``Undersample_comp_mVENC``. Returns (k_R, ACS, mask_YZ, NetKTV2).
-
-        ``caipi`` is accepted for compatibility; as in the MATLAB code the CAIPI
-        shift is computed but not used (the shifted lines are commented out).
-        shift_calc: optional [Nv,Nt,2] 0-based shifts (e.g. from find_shift).
-        """
-        Nx, Ny, Nz, Nc, Nv, Nt = k_compose.shape
-        k_R = np.zeros_like(k_compose)
-        mask_YZ = np.zeros((Nx, Ny, Nz, Nv, Nt))
-        xm = matlab_mid(Nx)
-
-        def initial_shift(v, t):
-            if shift_calc is not None:
-                return int(shift_calc[v, t, 0]), int(shift_calc[v, t, 1])
-            # first non-zero in MATLAB (column-major) order
-            nz = np.argwhere(k_compose[xm, :, :, 0, v, t].T != 0)
-            if nz.size == 0:
-                raise ValueError(f"frame (v={v}, t={t}) is empty at x = end/2")
-            return int(nz[0, 1]), int(nz[0, 0])
-
-        shifts = {(v, t): initial_shift(v, t) for v in range(Nv) for t in range(Nt)}
-        for (v, t), (iy, iz) in shifts.items():
-            k_R[:, iy::Ry, iz::Rz, :, v, t] = k_compose[:, iy::Ry, iz::Rz, :, v, t]
-
-        ys = mslice(Ny / 2 - acs_size[0] + 1, Ny / 2 + acs_size[0] + 1)
-        zs = mslice(Nz / 2 - acs_size[1] + 1, Nz / 2 + acs_size[1] + 1)
-        k_R[:, ys, zs] = k_compose[:, ys, zs]
-        ACS = np.array(k_compose[:, ys, zs], copy=True)
-
-        cK = 0
-        for cZ in range(Rz):
-            for cY in range(Ry):
-                for (v, t), (iy, iz) in shifts.items():
-                    mask_YZ[:, iy + cY::Ry, iz + cZ::Rz, v, t] = cK
-                cK += 1
-        net_ktv2 = cls._assemble_net(Ry, Rz, Nc, cls.NetT, cls.NetVenc)
-
-        mask_acs = np.all(k_R != 0, axis=(3, 4, 5))            # [Nx,Ny,Nz]
-        mask_YZ = mask_YZ * (1 - mask_acs[..., None, None])
-        return k_R, ACS, mask_YZ, net_ktv2
 
     # ------------------------------------------------------------ kernel networks
     @staticmethod
@@ -711,25 +569,6 @@ class GRAPPA5DKtv:
         net_t, net_v = cls._mode_nets(Ry, Rz, mode)
         return cls._assemble_net(Ry, Rz, Nc, net_t, net_v)
 
-    @classmethod
-    def get_net_ktv2(cls, Ry, Rz, Nc, mode):
-        """Port of ``getNetKTV2``: adds columns 4/5 = 0-based venc / time offset index."""
-        net_t, net_v = cls._mode_nets(Ry, Rz, mode, truncate=False)
-        return cls._assemble_net(Ry, Rz, Nc, net_t, net_v, with_vt_index=True)
-
-    @classmethod
-    def get_net_ktv3(cls, Ry, Rz, Nc, mode=None):
-        """Port of ``getNetKTV3``: dense ky/kz block, ``mode`` unused (as in MATLAB)."""
-        rows = [[dx, dy, dz, c]
-                for dx in cls.NetX
-                for dy in range(-(Ry - 1), Ry + 1)
-                for dz in range(-(Rz - 1), Rz + 1)
-                for c in range(Nc)]
-        net = np.zeros((len(rows), 4, Ry * Rz), dtype=np.int64)
-        for cK in range(1, Ry * Rz):
-            net[:, :, cK] = rows
-        return net
-
     # ------------------------------------------------------------ coil maps
     @staticmethod
     def espirit_km(raw, w=5, thresh=0.01):
@@ -742,12 +581,3 @@ class GRAPPA5DKtv:
         S, M = _local_eig_maps(data, w)
         coil = S * (M > thresh * np.abs(M).max())[..., None]
         return np.transpose(coil, (0, 1, 3, 2))
-
-    @staticmethod
-    def espirit_km_2d(raw_nz, w=5, thresh=0.01):
-        """Port of ``ESPIRIT_KM_2D``: slice-by-slice maps. raw_nz [Nx,Ny,Nz,Nc]."""
-        coil = np.zeros(raw_nz.shape, dtype=np.complex128)
-        for z in range(raw_nz.shape[2]):
-            S, M = _local_eig_maps(raw_nz[:, :, z, :], w)
-            coil[:, :, z, :] = S * (M > thresh * np.abs(M).max())[..., None]
-        return coil
