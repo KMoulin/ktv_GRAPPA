@@ -1,5 +1,5 @@
 
-function [img_recon_all2]=Undersample_n_recon_KTV_GRAPPA(kspace,listR,Channel_Sens_full,mode,listV,listT,undersample,nc_CC,lambda,force_sampling_mask,ridge_Tikhonov)
+function [img_recon_all2]=Undersample_n_recon_KTV_GRAPPA(kspace,listR,Channel_Sens_full,mode,listV,listT,undersample,nc_CC,lambda,force_sampling_mask,cuda_mode)
 %% Recon parameters INPUT
 % 'kspace' (Single or Double Complex Matrix) is a 6D matrix complex of dim [x y z coil Velocity Time] 
 % 'listR' (Double Vector) contains the acceleration factors [Ry, Rz]
@@ -53,8 +53,8 @@ end
 if nargin<10 || isempty (force_sampling_mask)
     force_sampling_mask=0;
 end
-if nargin<11 || isempty (ridge_Tikhonov)
-    ridge_Tikhonov=0;
+if nargin<11 || isempty (cuda_mode)
+    cuda_mode=1;
 end
 cptRy=listR(1); % Acceleration factor in Y
 cptRz=listR(2); % Acceleration factor in Z
@@ -136,16 +136,18 @@ for cpt_dir=listV
             ACS_input_gpu=gpuArray(single(ACS(:,:,:,:,cpt_dir,cpt_cardiac)));
 
             %%% Recon Matlab only (VERY SLOW)
-            % tic
-            % [k_recon]=GRAPPA_5D_ktv.Recon_n_Train_5D (k_R_composite_gpu,k_input_gpu,ACS_composite_gpu,ACS_input_gpu,mask_YZ(:,:,:,cpt_dir,cpt_cardiac),NetKTV,cptRy,cptRz,lambda);
-            % disp(['time to recon one 3D volume on matlab ' num2str(toc)]);
-
-            %%% Recon CUDA only (FAST)
-            tic;    
-            [k_recon_GPU] = Recon_n_Train_5D_2026_3(k_R_composite_gpu,k_input_gpu,ACS_composite_gpu,ACS_input_gpu,double(mask_YZ(:,:,:,cpt_dir,cpt_cardiac)),int32(NetKTV),cptRy,cptRz,double(lambda));
-            k_recon=gather(k_recon_GPU);
-
-            disp(['time to recon one 3D volume on CUDA ' num2str(toc)]);
+            if cuda_mode==0
+                tic
+                [k_recon]=GRAPPA_5D_ktv.Recon_n_Train_5D (k_R_composite_gpu,k_input_gpu,ACS_composite_gpu,ACS_input_gpu,mask_YZ(:,:,:,cpt_dir,cpt_cardiac),NetKTV,cptRy,cptRz,lambda);
+                disp(['time to recon one 3D volume on Matlab ' num2str(toc)]);
+            else
+                %%% Recon CUDA only (FAST)
+                tic;    
+                [k_recon_GPU] = Recon_n_Train_5D_2026_3(k_R_composite_gpu,k_input_gpu,ACS_composite_gpu,ACS_input_gpu,double(mask_YZ(:,:,:,cpt_dir,cpt_cardiac)),int32(NetKTV),cptRy,cptRz,double(lambda));
+                k_recon=gather(k_recon_GPU);
+                 disp(['time to recon one 3D volume on CUDA ' num2str(toc)]);
+            end
+           
             
         end
          
