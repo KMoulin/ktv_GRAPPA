@@ -390,55 +390,78 @@ classdef GRAPPA_5D_ktv
                     end
                 end
         end
-        function [k_composite_gpu]=Create_Composite_GPU(kspace,list_mask,Ry,Rz,current_V,current_Car,no_shift)
-            
+            function [k_composite_gpu]=Create_Composite_GPU(kspace,list_mask,Ry,Rz,current_V,current_Car,no_shift)
+
             if nargin<7
                 no_shift=0;
             end
-            % This logic works for 4 points in Venc and 3 points in Time 
+            % This logic works for 4 points in Venc and 3 points in Time
             % has to be adapted for other data format
             k_composite_gpu=gpuArray(single(zeros(size(kspace(:,:,:,:,1,1)))));
-            Nvenc=size(kspace,5); 
+            Nvenc=size(kspace,5);
             Ncar=size(kspace,6);
             Mvenc=min(GRAPPA_5D_ktv.MaxVencPts,Ry);
             Mcar=min(GRAPPA_5D_ktv.MaxTimePts,Rz);
+
+            %%% check up front that enough distinct sampling shifts exist
+            shiftsY=reshape(list_mask(:,1,1),1,[]);   % ky shift of each venc frame (cardiac phase 1)
+            shiftsZ=reshape(list_mask(1,:,2),1,[]);   % kz shift of each cardiac frame (venc 1)
+            if numel(unique(shiftsY))<Mvenc || numel(unique(shiftsZ))<Mcar
+                error('GRAPPA_5D_ktv:CompositeShifts', ...
+                    ['Create_Composite_GPU needs %d distinct ky shifts across venc frames and %d distinct kz shifts ' ...
+                     'across cardiac frames, but found ky shifts %s and kz shifts %s. ' ...
+                     'k-t-v GRAPPA requires sampling interleaved across venc (ky) and time (kz).'], ...
+                    Mvenc,Mcar,mat2str(shiftsY),mat2str(shiftsZ));
+            end
+
             list_venc=[];
             list_venc(1)=current_V;
             cpt_tmp=1;
             cpt_tmp_c=current_V;
+            n_iter=0;                                   
             while (cpt_tmp<Mvenc)
+                n_iter=n_iter+1;                  
+                if n_iter>Nvenc
+                    error('GRAPPA_5D_ktv:CompositeVenc', ...
+                        'Could not find %d distinct ky shifts across venc frames (found %s).', ...
+                        Mvenc,mat2str(reshape(list_mask(list_venc,1,1),1,[])));
+                end
                 cpt_tmp_c=cpt_tmp_c+1;
-
                 if cpt_tmp_c>Nvenc
                     cpt_tmp_c=1;
                 end
-
                 if (~any(list_mask(cpt_tmp_c,1,1)==list_mask(list_venc,1,1)))
                      cpt_tmp=cpt_tmp+1;
                      list_venc(cpt_tmp)=cpt_tmp_c;
                 end
             end
+
             list_car=[];
             list_car(1)=current_Car;
             cpt_tmp=1;
-            if current_Car==1
-                
+            if current_Car~=1
+                cpt_tmp_c=current_Car+Rz-1;
             else
-                cpt_tmp_c=current_Car+2;
-            end
+                cpt_tmp_c=current_Car;
+            end   % (for current_Car==1, cpt_tmp_c continues from the venc loop, as before)
+            n_iter=0;                                 
             while (cpt_tmp<Mcar)
+                n_iter=n_iter+1;                       
+                if n_iter>2*Ncar+3
+                    error('GRAPPA_5D_ktv:CompositeTime', ...
+                        'Could not find %d distinct kz shifts among the cardiac frames reachable from phase %d (found %s).', ...
+                        Mcar,current_Car,mat2str(reshape(list_mask(1,list_car,2),1,[])));
+                end
                 cpt_tmp_c=cpt_tmp_c-1;
-
                 if cpt_tmp_c<1
                     cpt_tmp_c=Ncar-cpt_tmp_c;
                 end
-                if current_Car==1&&cpt_tmp_c==Ncar-2 % added rule so we don't got too backward for the first cardiac phase. 
-                        cpt_tmp_c=current_Car+2;
-                end
+                % if current_Car==1&&cpt_tmp_c==Ncar-2 % added rule so we don't got too backward for the first cardiac phase.
+                %         cpt_tmp_c=current_Car+2;
+                % end
                 if cpt_tmp_c>Ncar
                     cpt_tmp_c=1;
                 end
-
                 if (~any(list_mask(1,cpt_tmp_c,2)==list_mask(1,list_car,2)))
                      cpt_tmp=cpt_tmp+1;
                      list_car(cpt_tmp)=cpt_tmp_c;
@@ -455,7 +478,7 @@ classdef GRAPPA_5D_ktv
                         initialShiftY2=1;
                         initialShiftZ2=1;
                      end
-                     k_composite_gpu(:,initialShiftY:Ry:end,initialShiftZ:Rz:end,:)=kspace(:,initialShiftY2:Ry:end-(initialShiftY-initialShiftY2),initialShiftZ2:Rz:end-(initialShiftY-initialShiftY2),:,list_venc(cpt_v),list_car(cpt_t));
+                     k_composite_gpu(:,initialShiftY:Ry:end,initialShiftZ:Rz:end,:)=kspace(:,initialShiftY2:Ry:end-(initialShiftY-initialShiftY2),initialShiftZ2:Rz:end-(initialShiftZ-initialShiftZ2),:,list_venc(cpt_v),list_car(cpt_t));
                 end
             end
         end
